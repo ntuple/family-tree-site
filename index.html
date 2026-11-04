@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Family Tree</title>
+  <!-- Libraries are vendored (no CDN), so the tree works offline and no third party sees the names. -->
+  <script src="vendor/d3.min.js"></script>
+  <script src="vendor/family-chart.min.js"></script>
+  <link rel="stylesheet" href="vendor/family-chart.css">
+  <script src="data/data.js"></script>
+  <style>
+    /* Design tokens. Light is the default; dark follows the OS setting. */
+    :root {
+      --bg: #f6f4ef;
+      --surface: #ffffff;
+      --surface-2: #f0ede6;
+      --text: #1c1917;
+      --text-muted: #57534e;
+      --border: #e2ddd3;
+      --accent: #9a3412;          /* 7.0:1 on white */
+      --accent-soft: #fbe9dd;
+      --on-accent: #ffffff;
+      --male: #d4e3ec;
+      --female: #f2dbe1;
+      --card-text: #1c1917;
+      --shadow: 0 1px 2px rgba(28, 25, 23, .06), 0 2px 8px rgba(28, 25, 23, .06);
+      --radius: 10px;
+      --ease: cubic-bezier(.2, .8, .2, 1);
+      --spring: cubic-bezier(.34, 1.36, .64, 1);   /* slight overshoot */
+      --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #171614;
+        --surface: #22201d;
+        --surface-2: #2c2a26;
+        --text: #f5f4f1;
+        --text-muted: #b5aea4;
+        --border: #3a3732;
+        --accent: #fdba74;        /* 10:1 on --surface */
+        --accent-soft: #3b2a1e;
+        --on-accent: #1c1917;
+        --male: #2b4553;
+        --female: #553440;
+        --card-text: #f5f4f1;
+        --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 2px 8px rgba(0, 0, 0, .3);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      display: flex; flex-direction: column;
+      background: var(--bg); color: var(--text);
+      font: 15px/1.5 var(--font);
+      -webkit-font-smoothing: antialiased;
+      /* family-chart's search box reads these */
+      --background-color: var(--surface);
+      --text-color: var(--text);
+    }
+    [hidden] { display: none !important; }
+    button { font: inherit; color: inherit; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+    /* Header */
+    header {
+      flex: 0 0 auto; z-index: 10;
+      display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px;
+      padding: 12px 20px;
+      background: var(--surface); border-bottom: 1px solid var(--border);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; margin-right: auto; }
+    .brand svg { color: var(--accent); flex: none; }
+    .brand h1 { font-size: 17px; font-weight: 650; letter-spacing: -.01em; margin: 0; }
+    .brand .count { font-size: 13px; color: var(--text-muted); }
+
+    /* Segmented view switcher */
+    .views {
+      display: flex; gap: 2px; padding: 3px;
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+      overflow-x: auto; scrollbar-width: none; max-width: 100%;
+    }
+    .views::-webkit-scrollbar { display: none; }
+    .views button {
+      flex: none; min-height: 36px; padding: 6px 12px;
+      background: transparent; border: 0; border-radius: 7px;
+      font-size: 14px; font-weight: 500; color: var(--text-muted);
+      cursor: pointer; white-space: nowrap;
+      transition: background-color .15s var(--ease), color .15s var(--ease);
+      touch-action: manipulation;
+    }
+    .views button:hover { color: var(--text); background: color-mix(in srgb, var(--surface) 60%, transparent); }
+    .views { position: relative; }
+    .views button { position: relative; z-index: 1; }
+    .views button[aria-pressed="true"] { color: var(--text); font-weight: 600; }
+    .views button:active { transform: scale(.96); }
+    .views .indicator { /* sliding pill behind the active view */
+      position: absolute; top: 3px; bottom: 3px; left: 0; width: 0;
+      background: var(--surface); border-radius: 7px; box-shadow: var(--shadow);
+    }
+    .ready .views .indicator { transition: transform .32s var(--spring), width .32s var(--spring), opacity .2s var(--ease); }
+
+    /* Search (family-chart autocomplete) */
+    .search { position: relative; }
+    .search > svg { position: absolute; left: 11px; top: 11px; z-index: 3; color: var(--text-muted); pointer-events: none; }
+    .search .f3-autocomplete-cont { width: 240px; font-size: 14px; }
+    .search .f3-autocomplete input {
+      height: 40px; padding: 8px 34px 8px 34px;
+      border: 1px solid var(--border); border-radius: 8px;
+      background: var(--surface-2); color: var(--text);
+      transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
+    }
+    .search .f3-autocomplete input::placeholder { color: var(--text-muted); }
+    .search .f3-autocomplete input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); background: var(--surface); }
+    .search .f3-autocomplete-items { border: 0; border-radius: 8px; margin-top: 4px; box-shadow: var(--shadow); }
+    .search .f3-autocomplete.active .f3-autocomplete-items { border: 1px solid var(--border); }
+    .search .f3-autocomplete-item > div { border-bottom: 1px solid var(--border); }
+    .search .f3-autocomplete-item > div:hover,
+    .search .f3-autocomplete-item.f3-selected > div { background: var(--accent-soft); color: var(--text); }
+
+    /* Chart area */
+    main { flex: 1 1 auto; position: relative; min-height: 0; }
+    .pane { position: absolute; top: 0; bottom: 0; }
+    #Single { left: 0; right: 0; }
+    #DadSide { left: 0; width: 50%; }
+    #MomSide { right: 0; width: 50%; }
+    main::after { /* centre line where Dad and Mom meet */
+      content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px;
+      background: linear-gradient(to bottom, transparent, var(--border) 15%, var(--border) 85%, transparent);
+      pointer-events: none;
+    }
+    main.single::after { display: none; }
+    .pane-label {
+      position: absolute; top: 14px; z-index: 2;
+      font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+      color: var(--text-muted); background: var(--surface);
+      border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px;
+      pointer-events: none;
+    }
+    .pane-label { z-index: 4; }
+    #DadSide .pane-label { right: 16px; }
+    #MomSide .pane-label { left: 16px; }
+
+    /* Floating controls */
+    .toolbar {
+      position: absolute; right: 16px; bottom: 16px; z-index: 5;
+      display: flex; flex-direction: column; gap: 2px; padding: 4px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow);
+    }
+    .toolbar button {
+      width: 40px; height: 40px; display: grid; place-items: center;
+      background: transparent; border: 0; border-radius: 8px; cursor: pointer; color: var(--text);
+      transition: background-color .15s var(--ease);
+    }
+    .toolbar button { transition: background-color .15s var(--ease), transform .12s var(--ease); }
+    .toolbar button:hover { background: var(--surface-2); }
+    .toolbar button:active { transform: scale(.9); }
+    #reset:hover svg { transform: rotate(-60deg); }
+    #reset svg { transition: transform .3s var(--spring); }
+    .toolbar hr { width: 24px; border: 0; border-top: 1px solid var(--border); margin: 2px auto; }
+
+    .legend {
+      position: absolute; left: 16px; bottom: 16px; z-index: 5;
+      display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px;
+      padding: 8px 14px; max-width: calc(100% - 100px);
+      font-size: 13px; color: var(--text-muted);
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow);
+    }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .swatch { width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--border); }
+    .swatch.m { background: var(--male); }
+    .swatch.f { background: var(--female); }
+    .swatch.main { background: transparent; border: 2px solid var(--accent); }
+    .legend .tip { color: var(--text-muted); }
+
+    /* family-chart theming */
+    .f3 {
+      width: 100%; height: 100%;
+      --background-color: var(--bg);
+      --text-color: var(--card-text);
+      --male-color: var(--male);
+      --female-color: var(--female);
+      --genderless-color: var(--surface-2);
+      background-color: var(--bg);
+      background-image: radial-gradient(color-mix(in srgb, var(--text-muted) 22%, transparent) 1px, transparent 1px);
+      background-size: 22px 22px;
+    }
+    .f3 div.card-inner {
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      border: 1px solid color-mix(in srgb, var(--card-text) 10%, transparent);
+      transition: box-shadow .2s var(--ease), outline-color .2s var(--ease);
+    }
+    .f3 div.card .card-inner { transition: transform .2s var(--spring), box-shadow .2s var(--ease); }
+    .f3 div.card:hover .card-inner { transform: translateY(-3px); box-shadow: 0 0 0 2px var(--accent), 0 8px 20px rgba(28, 25, 23, .14); }
+    .f3 div.card:active .card-inner { transform: translateY(0) scale(.97); transition-duration: .08s; }
+    .f3 div.card-main .card-inner { outline: 3px solid var(--accent); outline-offset: 2px; animation: focus-pulse 1.4s var(--ease) .35s 2; }
+
+    /* Motion */
+    @keyframes focus-pulse { /* draws the eye to the person in focus after a re-centre */
+      0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent), var(--shadow); }
+      100% { box-shadow: 0 0 0 16px transparent, var(--shadow); }
+    }
+    @keyframes scene-in { from { opacity: 0; transform: scale(.985); } to { opacity: 1; transform: none; } }
+    @keyframes rise-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+    @keyframes drop-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+    main.entering .pane:not([hidden]) { animation: scene-in .35s var(--ease) both; }
+    header > * { animation: drop-in .4s var(--ease) both; }
+    header > :nth-child(2) { animation-delay: .06s; }
+    header > :nth-child(3) { animation-delay: .12s; }
+    .legend { animation: rise-in .45s var(--ease) .2s both; }
+    .toolbar { animation: rise-in .45s var(--ease) .28s both; }
+    .pane-label { animation: rise-in .4s var(--ease) .15s both; }
+    .f3 div.card-image-rect .person-icon svg { border-radius: 8px; opacity: .85; }
+    .f3 .card-label, .f3 div.card-image-rect div { font-size: 14px; }
+    .f3 .link { stroke: color-mix(in srgb, var(--text-muted) 55%, transparent); stroke-width: 1.5px; }
+
+    /* Passphrase gate (public site only) */
+    body.locked header, body.locked main { visibility: hidden; }
+    #gate { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: var(--bg); }
+    .gate-card {
+      width: min(380px, 100%); display: flex; flex-direction: column; gap: 8px;
+      padding: 28px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow);
+      animation: rise-in .4s var(--ease) both;
+    }
+    .gate-card svg { color: var(--accent); }
+    .gate-card h2 { margin: 4px 0 0; font-size: 20px; letter-spacing: -.01em; }
+    .gate-card p { margin: 0 0 8px; color: var(--text-muted); }
+    .gate-card label { font-size: 14px; font-weight: 600; }
+    .gate-card input {
+      height: 44px; padding: 8px 12px; font: inherit; color: var(--text);
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+    }
+    .gate-card input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); background: var(--surface); }
+    .gate-card .gate-error { min-height: 1.5em; margin: 0; font-size: 14px; color: var(--accent); }
+    .gate-card button {
+      height: 44px; margin-top: 4px; border: 0; border-radius: 8px; cursor: pointer;
+      background: var(--accent); color: var(--on-accent); font-weight: 600;
+      transition: transform .12s var(--ease), opacity .15s var(--ease);
+    }
+    .gate-card button:active { transform: scale(.98); }
+    .gate-card button:disabled { opacity: .6; cursor: progress; }
+
+    /* Small screens: stack the two halves of the whole-family view, drop the long tip. */
+    @media (max-width: 760px) {
+      header { padding: 10px 12px; gap: 8px; }
+      .brand { margin-right: 0; flex: 1 1 auto; }
+      .search, .search .f3-autocomplete-cont { flex: 1 1 100%; width: 100%; }
+      .views { order: 3; flex: 1 1 100%; }
+      #DadSide, #MomSide { width: 100%; height: 50%; }
+      #DadSide { top: 0; bottom: auto; }
+      #MomSide { top: 50%; bottom: 0; border-top: 1px solid var(--border); }
+      main::after { display: none; }
+      #DadSide .pane-label, #MomSide .pane-label { left: 12px; right: auto; }
+      .legend .tip { display: none; }
+      .toolbar { right: 12px; bottom: 12px; }
+      .legend { left: 12px; bottom: 12px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition-duration: 0s !important; animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="2" y="17" width="6" height="5" rx="1"/><rect x="16" y="17" width="6" height="5" rx="1"/><path d="M12 7v5M5 17v-3a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v3"/></svg>
+      <h1>Family Tree</h1>
+      <span class="count" id="count"></span>
+    </div>
+    <nav class="views" aria-label="Tree view">
+      <span class="indicator" aria-hidden="true"></span>
+      <button type="button" data-view="big">Overview</button>
+      <button type="button" data-view="parents">Ancestors</button>
+      <button type="button" data-view="dad">Paternal Line</button>
+      <button type="button" data-view="mom">Maternal Line</button>
+      <button type="button" data-view="spouse">In-Laws</button>
+    </nav>
+    <div class="search" role="search">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <div id="search"></div>
+    </div>
+  </header>
+
+  <div id="gate" hidden>
+    <form class="gate-card" autocomplete="on">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      <h2>This family tree is private</h2>
+      <p>Enter the passphrase you were given to view it.</p>
+      <input type="text" name="username" value="family-tree" autocomplete="username" hidden>
+      <label for="pass">Passphrase</label>
+      <input id="pass" type="password" autocomplete="current-password" required>
+      <p id="gateError" class="gate-error" role="alert"></p>
+      <button type="submit">Unlock</button>
+    </form>
+  </div>
+
+  <main id="main">
+    <h2 class="sr-only" id="viewTitle" aria-live="polite"></h2>
+    <!-- "Overview": Dad's family on the left, Mom's on the right; Dad and Mom meet at the centre line. -->
+    <section id="DadSide" class="pane" aria-label="Paternal side"><span class="pane-label">Paternal side</span><div id="DadChart" class="f3"></div></section>
+    <section id="MomSide" class="pane" aria-label="Maternal side"><span class="pane-label">Maternal side</span><div id="MomChart" class="f3"></div></section>
+    <!-- Other views: one chart centred on a single person. -->
+    <section id="Single" class="pane" hidden><div id="SingleChart" class="f3"></div></section>
+
+    <div class="legend" aria-label="Legend">
+      <span><i class="swatch m"></i>Male</span>
+      <span><i class="swatch f"></i>Female</span>
+      <span><i class="swatch main"></i>Selected</span>
+      <span class="tip">Click a person to focus · Scroll to zoom · Drag to pan</span>
+    </div>
+
+    <div class="toolbar" role="toolbar" aria-label="Zoom" aria-orientation="vertical">
+      <button type="button" id="zoomIn" aria-label="Zoom in" title="Zoom in (+)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button type="button" id="zoomOut" aria-label="Zoom out" title="Zoom out (−)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg>
+      </button>
+      <hr>
+      <button type="button" id="reset" aria-label="Reset view" title="Reset view (0)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+      </button>
+    </div>
+  </main>
+
+  <script>
+    // The public site ships the family data encrypted (see scripts/build-site.mjs); the local
+    // copy loads it in the clear. Either way the tree starts once FAMILY_DATA exists.
+    const PASS_KEY = 'family-tree-pass'
+    const b64 = (s) => Uint8Array.from(atob(s), (ch) => ch.charCodeAt(0))
+
+    async function decrypt(pass) {
+      const { salt, iv, ct, iter } = window.FAMILY_ENC
+      const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey'])
+      const key = await crypto.subtle.deriveKey(
+        { name: 'PBKDF2', salt: b64(salt), iterations: iter, hash: 'SHA-256' },
+        base, { name: 'AES-GCM', length: 256 }, false, ['decrypt'],
+      )
+      const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(iv) }, key, b64(ct))
+      const { meta, data } = JSON.parse(new TextDecoder().decode(plain))
+      window.FAMILY_META = meta
+      window.FAMILY_DATA = data
+    }
+
+    async function boot() {
+      if (window.FAMILY_DATA) return start()
+      const gate = document.querySelector('#gate')
+      const form = gate.querySelector('form')
+      const input = gate.querySelector('#pass')
+      const error = gate.querySelector('#gateError')
+      const button = form.querySelector('button')
+      const attempt = async (pass, remembered) => {
+        try {
+          await decrypt(pass)
+        } catch {
+          if (remembered) try { sessionStorage.removeItem(PASS_KEY) } catch {}
+          return false
+        }
+        gate.hidden = true
+        document.body.classList.remove('locked')
+        start()
+        // Remember for this tab only (cleared when it closes). Storage can be blocked
+        // (private browsing, file://), so this is best-effort.
+        try { sessionStorage.setItem(PASS_KEY, pass) } catch {}
+        return true
+      }
+      let saved = null
+      try { saved = sessionStorage.getItem(PASS_KEY) } catch {}
+      if (saved && (await attempt(saved, true))) return
+      document.body.classList.add('locked')
+      gate.hidden = false
+      input.focus()
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault()
+        error.textContent = ''
+        button.disabled = true
+        button.textContent = 'Unlocking…'
+        const ok = await attempt(input.value, false)
+        button.disabled = false
+        button.textContent = 'Unlock'
+        if (!ok) {
+          error.textContent = "That passphrase didn't work. Check it and try again."
+          input.select()
+        }
+      })
+    }
+
+    function start() {
+      const M = FAMILY_META
+      const LAST = 1e6
+      const FIRST = -1e6
+      const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches
+      const MS = reduceMotion ? 0 : 500
+      const narrow = matchMedia('(max-width: 760px)')
+
+      document.querySelector('#count').textContent = `${M.count} members`
+
+      // Siblings in birth order, except: on Dad's chart Dad goes last (rightmost, next to the
+      // centre line); on Mom's chart Mom goes first (leftmost, next to the centre line).
+      const sortWith = (pinnedId, pinnedOrder) => (a, b) => {
+        const key = (d) => (d.id === pinnedId ? pinnedOrder : d.data.order)
+        return key(a) - key(b)
+      }
+
+      function makeChart(selector, mainId, sortFn) {
+        const chart = f3.createChart(selector, FAMILY_DATA)
+          .setTransitionTime(MS)
+          .setCardXSpacing(250)
+          .setCardYSpacing(130)
+          .setShowSiblingsOfMain(true)
+          .setSingleParentEmptyCard(false)
+          .setSortChildrenFunction(sortFn)
+        chart.setCardHtml()
+          .setCardDisplay([['first name', 'middle name', 'last name']])
+          .setMiniTree(true)
+          .setOnHoverPathToMain()
+        chart.updateMainId(mainId)
+        return chart
+      }
+
+      const fullName = (d) => [d.data['first name'], d.data['middle name'], d.data['last name']].filter(Boolean).join(' ')
+      const byOrder = (a, b) => a.data.order - b.data.order
+      const dadChart = makeChart('#DadChart', M.dadRoot, sortWith(M.center, LAST))
+      const momChart = makeChart('#MomChart', M.momRoot, sortWith(M.centerSpouse, FIRST))
+      const single = makeChart('#SingleChart', M.self, byOrder)
+
+      single.setPersonDropdown(
+        fullName,
+        {
+          cont: document.querySelector('#search'),
+          placeholder: 'Search people…',
+          onSelect: (id) => focusOn(id, null),
+        },
+      )
+      const searchInput = document.querySelector('#search input')
+      if (searchInput) searchInput.setAttribute('aria-label', 'Search people by name')
+
+      const VIEWS = {
+        big: { title: 'Overview' },
+        parents: { title: 'Ancestors', id: M.self },     // me in the middle row, both grandparent lines above
+        dad: { title: 'Paternal Line', id: M.dadRoot },                     // everyone descended from Dad's earliest ancestor
+        mom: { title: 'Maternal Line', id: M.momRoot },                     // everyone descended from Mom's earliest ancestor
+        spouse: { title: 'In-Laws', id: M.inlawRoot },             // everyone descended from my spouse's earliest ancestor
+      }
+
+      const main = document.querySelector('#main')
+      const viewTitle = document.querySelector('#viewTitle')
+      const panes = {
+        dad: document.querySelector('#DadSide'),
+        mom: document.querySelector('#MomSide'),
+        single: document.querySelector('#Single'),
+      }
+      const buttons = document.querySelectorAll('.views button')
+      let current = 'big'
+
+      const indicator = document.querySelector('.views .indicator')
+      function moveIndicator() {
+        const active = document.querySelector('.views button[aria-pressed="true"]')
+        indicator.style.opacity = active ? '1' : '0'
+        if (!active) return
+        indicator.style.width = `${active.offsetWidth}px`
+        indicator.style.transform = `translateX(${active.offsetLeft}px)`
+      }
+
+      // Replay the enter animation on the chart area so a view change reads as a new scene.
+      function enterScene() {
+        main.classList.remove('entering')
+        void main.offsetWidth // restart the CSS animation
+        main.classList.add('entering')
+      }
+
+      function press(view) {
+        buttons.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === view)))
+        moveIndicator()
+        enterScene()
+        const active = [...buttons].find((b) => b.dataset.view === view)
+        if (active) active.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: reduceMotion ? 'auto' : 'smooth' })
+        if (view && location.hash.slice(1) !== view) history.replaceState(null, '', `#${view}`)
+      }
+
+      // Place one person's card at a fraction of the pane's width (0 = left edge, 1 = right edge),
+      // at a readable zoom. cardToMiddle centres a card at width/2, so we hand it a stretched
+      // width to land the card where we want it instead.
+      function placeCard(chart, personId, fractionX, scale = 0.75, fractionY = 0.5) {
+        const datum = chart.store.getTreeDatum(personId)
+        if (!datum) return
+        const rect = chart.svg.getBoundingClientRect()
+        f3.handlers.cardToMiddle({
+          datum,
+          svg: chart.svg,
+          svg_dim: { width: rect.width * 2 * fractionX, height: rect.height * 2 * fractionY },
+          scale,
+          transition_time: MS,
+        })
+      }
+
+      function showBig() {
+        current = 'big'
+        press('big')
+        viewTitle.textContent = VIEWS.big.title
+        main.classList.remove('single')
+        panes.single.hidden = true
+        panes.dad.hidden = false
+        panes.mom.hidden = false
+        dadChart.updateMainId(M.dadRoot)
+        momChart.updateMainId(M.momRoot)
+        dadChart.updateTree({ initial: true })
+        momChart.updateTree({ initial: true })
+        // Side by side: Dad near the right edge of the left pane, Mom near the left edge of the
+        // right pane, so they meet at the centre line. Stacked (phones): both centred.
+        const stacked = narrow.matches
+        placeCard(dadChart, M.center, stacked ? 0.5 : 0.66, stacked ? 0.6 : 0.75, stacked ? 0.85 : 0.5)
+        placeCard(momChart, M.centerSpouse, stacked ? 0.5 : 0.34, stacked ? 0.6 : 0.75, stacked ? 0.85 : 0.5)
+      }
+
+      function focusOn(id, view) {
+        current = view
+        press(view)
+        const person = FAMILY_DATA.find((p) => p.id === id)
+        viewTitle.textContent = view ? VIEWS[view].title
+          : `Selected: ${fullName(person)}`
+        main.classList.add('single')
+        panes.dad.hidden = true
+        panes.mom.hidden = true
+        panes.single.hidden = false
+        single.updateMainId(id)
+        fitSingle(id)
+      }
+
+      // Desktop: fit the whole tree. Phones: fitting a wide tree makes cards unreadable,
+      // so centre the person in focus at a readable zoom instead.
+      function fitSingle(id) {
+        if (!narrow.matches) return single.updateTree({ initial: true, tree_position: 'fit' })
+        single.updateTree({ initial: true })
+        placeCard(single, id, 0.5, 0.6, 0.3)
+      }
+
+      function show(view) {
+        if (!VIEWS[view]) view = 'big'
+        if (view === 'big') showBig()
+        else focusOn(VIEWS[view].id, view)
+      }
+
+      // Zoom applies to every visible chart, so both halves of the whole-family view stay in step.
+      const visibleCharts = () => (main.classList.contains('single') ? [single] : [dadChart, momChart])
+      const zoom = (amount) => visibleCharts().forEach((c) => f3.handlers.manualZoom({ amount, svg: c.svg, transition_time: reduceMotion ? 0 : 200 }))
+      const reset = () => (current ? show(current) : fitSingle(single.getMainDatum().id))
+
+      buttons.forEach((b) => b.addEventListener('click', () => show(b.dataset.view)))
+      document.querySelector('#zoomIn').addEventListener('click', () => zoom(1.25))
+      document.querySelector('#zoomOut').addEventListener('click', () => zoom(0.8))
+      document.querySelector('#reset').addEventListener('click', reset)
+
+      document.addEventListener('keydown', (e) => {
+        if (e.target.closest('input, textarea') || e.metaKey || e.ctrlKey || e.altKey) return
+        if (e.key === '+' || e.key === '=') zoom(1.25)
+        else if (e.key === '-' || e.key === '_') zoom(0.8)
+        else if (e.key === '0') reset()
+        else if (e.key === '/') { e.preventDefault(); searchInput?.focus() }
+      })
+
+      window.addEventListener('hashchange', () => show(location.hash.slice(1)))
+      let resizeTimer
+      window.addEventListener('resize', () => {
+        clearTimeout(resizeTimer)
+        moveIndicator()
+        resizeTimer = setTimeout(() => { if (current === 'big') showBig() }, 200)
+      })
+
+      show(location.hash.slice(1))
+      requestAnimationFrame(() => document.body.classList.add('ready')) // enable indicator transition after first paint
+    }
+
+    boot()
+  </script>
+</body>
+</html>
+
