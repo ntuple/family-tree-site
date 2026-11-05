@@ -124,26 +124,7 @@
 
     /* Chart area */
     main { flex: 1 1 auto; position: relative; min-height: 0; }
-    .pane { position: absolute; top: 0; bottom: 0; }
-    #Single { left: 0; right: 0; }
-    #DadSide { left: 0; width: 50%; }
-    #MomSide { right: 0; width: 50%; }
-    main::after { /* centre line where Dad and Mom meet */
-      content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px;
-      background: linear-gradient(to bottom, transparent, var(--border) 15%, var(--border) 85%, transparent);
-      pointer-events: none;
-    }
-    main.single::after { display: none; }
-    .pane-label {
-      position: absolute; top: 14px; z-index: 2;
-      font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
-      color: var(--text-muted); background: var(--surface);
-      border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px;
-      pointer-events: none;
-    }
-    .pane-label { z-index: 4; }
-    #DadSide .pane-label { right: 16px; }
-    #MomSide .pane-label { left: 16px; }
+    .pane { position: absolute; inset: 0; }
 
     /* Floating controls */
     .toolbar {
@@ -214,7 +195,6 @@
     header > :nth-child(3) { animation-delay: .12s; }
     .legend { animation: rise-in .45s var(--ease) .2s both; }
     .toolbar { animation: rise-in .45s var(--ease) .28s both; }
-    .pane-label { animation: rise-in .4s var(--ease) .15s both; }
     .f3 div.card-image-rect .person-icon svg { border-radius: 8px; opacity: .85; }
     .f3 .card-label, .f3 div.card-image-rect div { font-size: 14px; }
     .f3 .link { stroke: color-mix(in srgb, var(--text-muted) 55%, transparent); stroke-width: 1.5px; }
@@ -251,11 +231,6 @@
       .brand { margin-right: 0; flex: 1 1 auto; }
       .search, .search .f3-autocomplete-cont { flex: 1 1 100%; width: 100%; }
       .views { order: 3; flex: 1 1 100%; }
-      #DadSide, #MomSide { width: 100%; height: 50%; }
-      #DadSide { top: 0; bottom: auto; }
-      #MomSide { top: 50%; bottom: 0; border-top: 1px solid var(--border); }
-      main::after { display: none; }
-      #DadSide .pane-label, #MomSide .pane-label { left: 12px; right: auto; }
       .legend .tip { display: none; }
       .toolbar { right: 12px; bottom: 12px; }
       .legend { left: 12px; bottom: 12px; }
@@ -274,7 +249,6 @@
     </div>
     <nav class="views" aria-label="Tree view">
       <span class="indicator" aria-hidden="true"></span>
-      <button type="button" data-view="big">Overview</button>
       <button type="button" data-view="parents">Ancestors</button>
       <button type="button" data-view="dad">Paternal Line</button>
       <button type="button" data-view="mom">Maternal Line</button>
@@ -301,11 +275,7 @@
 
   <main id="main">
     <h2 class="sr-only" id="viewTitle" aria-live="polite"></h2>
-    <!-- "Overview": Dad's family on the left, Mom's on the right; Dad and Mom meet at the centre line. -->
-    <section id="DadSide" class="pane" aria-label="Paternal side"><span class="pane-label">Paternal side</span><div id="DadChart" class="f3"></div></section>
-    <section id="MomSide" class="pane" aria-label="Maternal side"><span class="pane-label">Maternal side</span><div id="MomChart" class="f3"></div></section>
-    <!-- Other views: one chart centred on a single person. -->
-    <section id="Single" class="pane" hidden><div id="SingleChart" class="f3"></div></section>
+    <section id="Single" class="pane"><div id="SingleChart" class="f3"></div></section>
 
     <div class="legend" aria-label="Legend">
       <span><i class="swatch m"></i>Male</span>
@@ -392,20 +362,11 @@
 
     function start() {
       const M = FAMILY_META
-      const LAST = 1e6
-      const FIRST = -1e6
       const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches
       const MS = reduceMotion ? 0 : 500
       const narrow = matchMedia('(max-width: 760px)')
 
       document.querySelector('#count').textContent = `${M.count} members`
-
-      // Siblings in birth order, except: on Dad's chart Dad goes last (rightmost, next to the
-      // centre line); on Mom's chart Mom goes first (leftmost, next to the centre line).
-      const sortWith = (pinnedId, pinnedOrder) => (a, b) => {
-        const key = (d) => (d.id === pinnedId ? pinnedOrder : d.data.order)
-        return key(a) - key(b)
-      }
 
       function makeChart(selector, mainId, sortFn) {
         const chart = f3.createChart(selector, FAMILY_DATA)
@@ -425,8 +386,6 @@
 
       const fullName = (d) => [d.data['first name'], d.data['middle name'], d.data['last name']].filter(Boolean).join(' ')
       const byOrder = (a, b) => a.data.order - b.data.order
-      const dadChart = makeChart('#DadChart', M.dadRoot, sortWith(M.center, LAST))
-      const momChart = makeChart('#MomChart', M.momRoot, sortWith(M.centerSpouse, FIRST))
       const single = makeChart('#SingleChart', M.self, byOrder)
 
       single.setPersonDropdown(
@@ -441,7 +400,6 @@
       if (searchInput) searchInput.setAttribute('aria-label', 'Search people by name')
 
       const VIEWS = {
-        big: { title: 'Overview' },
         parents: { title: 'Ancestors', id: M.self },     // me in the middle row, both grandparent lines above
         dad: { title: 'Paternal Line', id: M.dadRoot },                     // everyone descended from Dad's earliest ancestor
         mom: { title: 'Maternal Line', id: M.momRoot },                     // everyone descended from Mom's earliest ancestor
@@ -450,13 +408,8 @@
 
       const main = document.querySelector('#main')
       const viewTitle = document.querySelector('#viewTitle')
-      const panes = {
-        dad: document.querySelector('#DadSide'),
-        mom: document.querySelector('#MomSide'),
-        single: document.querySelector('#Single'),
-      }
       const buttons = document.querySelectorAll('.views button')
-      let current = 'big'
+      let current = 'parents'
 
       const indicator = document.querySelector('.views .indicator')
       function moveIndicator() {
@@ -483,7 +436,7 @@
         if (view && location.hash.slice(1) !== view) history.replaceState(null, '', `#${view}`)
       }
 
-      // Place one person's card at a fraction of the pane's width (0 = left edge, 1 = right edge),
+      // Place one person's card at a fraction of the chart's width and height,
       // at a readable zoom. cardToMiddle centres a card at width/2, so we hand it a stretched
       // width to land the card where we want it instead.
       function placeCard(chart, personId, fractionX, scale = 0.75, fractionY = 0.5) {
@@ -499,57 +452,33 @@
         })
       }
 
-      function showBig() {
-        current = 'big'
-        press('big')
-        viewTitle.textContent = VIEWS.big.title
-        main.classList.remove('single')
-        panes.single.hidden = true
-        panes.dad.hidden = false
-        panes.mom.hidden = false
-        dadChart.updateMainId(M.dadRoot)
-        momChart.updateMainId(M.momRoot)
-        dadChart.updateTree({ initial: true })
-        momChart.updateTree({ initial: true })
-        // Side by side: Dad near the right edge of the left pane, Mom near the left edge of the
-        // right pane, so they meet at the centre line. Stacked (phones): both centred.
-        const stacked = narrow.matches
-        placeCard(dadChart, M.center, stacked ? 0.5 : 0.66, stacked ? 0.6 : 0.75, stacked ? 0.85 : 0.5)
-        placeCard(momChart, M.centerSpouse, stacked ? 0.5 : 0.34, stacked ? 0.6 : 0.75, stacked ? 0.85 : 0.5)
-      }
-
       function focusOn(id, view) {
         current = view
         press(view)
         const person = FAMILY_DATA.find((p) => p.id === id)
         viewTitle.textContent = view ? VIEWS[view].title
           : `Selected: ${fullName(person)}`
-        main.classList.add('single')
-        panes.dad.hidden = true
-        panes.mom.hidden = true
-        panes.single.hidden = false
         single.updateMainId(id)
-        fitSingle(id)
+        fitSingle(id, view)
       }
 
       // Desktop: fit the whole tree. Phones: fitting a wide tree makes cards unreadable,
-      // so centre the person in focus at a readable zoom instead.
-      function fitSingle(id) {
+      // so place the person in focus at a readable zoom instead: low in Ancestors (their
+      // ancestors are above), high in the line views (descendants are below), else centred.
+      function fitSingle(id, view) {
         if (!narrow.matches) return single.updateTree({ initial: true, tree_position: 'fit' })
         single.updateTree({ initial: true })
-        placeCard(single, id, 0.5, 0.6, 0.3)
+        const fractionY = { parents: 0.75, dad: 0.3, mom: 0.3, spouse: 0.3 }[view] ?? 0.5
+        placeCard(single, id, 0.5, 0.6, fractionY)
       }
 
       function show(view) {
-        if (!VIEWS[view]) view = 'big'
-        if (view === 'big') showBig()
-        else focusOn(VIEWS[view].id, view)
+        if (!VIEWS[view]) view = 'parents' // default, and where old #big links land
+        focusOn(VIEWS[view].id, view)
       }
 
-      // Zoom applies to every visible chart, so both halves of the whole-family view stay in step.
-      const visibleCharts = () => (main.classList.contains('single') ? [single] : [dadChart, momChart])
-      const zoom = (amount) => visibleCharts().forEach((c) => f3.handlers.manualZoom({ amount, svg: c.svg, transition_time: reduceMotion ? 0 : 200 }))
-      const reset = () => (current ? show(current) : fitSingle(single.getMainDatum().id))
+      const zoom = (amount) => f3.handlers.manualZoom({ amount, svg: single.svg, transition_time: reduceMotion ? 0 : 200 })
+      const reset = () => (current ? show(current) : fitSingle(single.getMainDatum().id, null))
 
       buttons.forEach((b) => b.addEventListener('click', () => show(b.dataset.view)))
       document.querySelector('#zoomIn').addEventListener('click', () => zoom(1.25))
@@ -565,12 +494,7 @@
       })
 
       window.addEventListener('hashchange', () => show(location.hash.slice(1)))
-      let resizeTimer
-      window.addEventListener('resize', () => {
-        clearTimeout(resizeTimer)
-        moveIndicator()
-        resizeTimer = setTimeout(() => { if (current === 'big') showBig() }, 200)
-      })
+      window.addEventListener('resize', moveIndicator)
 
       show(location.hash.slice(1))
       requestAnimationFrame(() => document.body.classList.add('ready')) // enable indicator transition after first paint
